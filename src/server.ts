@@ -88,9 +88,9 @@ const chatIO = new Server(chatServer, {
 
 // Manejar conexiones de Socket.IO para el chat
 chatIO.on('connection', (socket) => {
-    console.log(`Usuario conectado al chat: ${socket.id}`);
+    console.log(`User connected to chat: ${socket.id}`);
 
-    // Verificación JWT para el socket principal
+    // JWT Verification Middleware
     socket.use(([event, ...args], next) => {
         const token = socket.handshake.auth.token;
         if (!token) return next(new Error('unauthorized'));
@@ -104,29 +104,55 @@ chatIO.on('connection', (socket) => {
     });
 
     socket.on('error', (err) => {
-        if (err && err.message == 'unauthorized') {
-            console.debug('unauthorized user');
+        if (err?.message === 'unauthorized') {
+            console.debug('Unauthorized user');
             socket.emit('status', { status: 'unauthorized' });
             socket.disconnect();
         }
     });
 
-    // Manejar evento para unirse a una sala
     socket.on('join_room', (roomId: string) => {
         socket.join(roomId);
-        console.log(`Usuario con ID: ${socket.id} se unió a la sala: ${roomId}`);
+        console.log(`User ${socket.id} joined room: ${roomId}`);
+        
+        try {
+            const token = socket.handshake.auth.token;
+            const decoded = verifyAccessToken(token);
+            socket.to(roomId).emit('user_connected', {
+                room: roomId,
+                username: decoded.name,
+                time: new Date().toLocaleTimeString()
+            });
+        } catch (err) {
+            console.debug('Could not decode token for connection notification');
+        }
     });
 
-    // Manejar evento para enviar un mensaje
     socket.on('send_message', (data: ChatMessage) => {
-        // Enviar el mensaje solo a los clientes en la misma sala
         socket.to(data.room).emit('receive_message', data);
-        console.log(`Mensaje enviado en sala ${data.room} por ${data.author}: ${data.message}`);
+        console.log(`Message sent in room ${data.room} by ${data.author}: ${data.message}`);
     });
 
-    // Manejar desconexión
     socket.on('disconnect', () => {
-        console.log(`Usuario desconectado del chat: ${socket.id}`);
+        console.log(`User disconnected: ${socket.id}`);
+        
+        try {
+            const token = socket.handshake.auth.token;
+            const decoded = verifyAccessToken(token);
+            const rooms = Array.from(socket.rooms);
+            
+            rooms.forEach(room => {
+                if (room !== socket.id) {
+                    socket.to(room).emit('user_disconnected', {
+                        room,
+                        username: decoded.name,
+                        time: new Date().toLocaleTimeString()
+                    });
+                }
+            });
+        } catch (err) {
+            console.debug('Could not decode token for disconnect notification');
+        }
     });
 });
 
@@ -147,7 +173,7 @@ app.get('/', (req, res) => {
 
 // Conexión a MongoDB
 mongoose
-    .connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/seminarioExpress')
+    .connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/test')
     .then(() => console.log('Connected to DB'))
     .catch((error) => console.error('DB Connection Error:', error));
 
